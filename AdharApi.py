@@ -1,10 +1,20 @@
+# -*- coding: utf-8 -*-
+"""
+Aadhar API Clone (Auto-Port Select)
+Owner: @Xenon33cyber
+Source: nitin-developer-api-paid.nitinshab43.workers.dev
+"""
+
 from flask import Flask, request, jsonify
 import requests
 import json
 import time
+import socket
 from datetime import datetime
 import hashlib
 import re
+import os
+import sys
 
 app = Flask(__name__)
 
@@ -16,6 +26,53 @@ DEFAULT_KEY = "MY_TEST_KEY_123"
 CACHE_ENABLED = True
 CACHE_DURATION = 300
 cache_store = {}
+
+# ============================================================
+# AUTO-PORT SELECT
+# ============================================================
+START_PORT = 5000
+MAX_PORTS = 50
+
+def find_available_port(start_port=START_PORT, max_attempts=MAX_PORTS):
+    """Find an available port starting from start_port"""
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(('0.0.0.0', port))
+            sock.close()
+            return port
+        except OSError:
+            continue
+    return None
+
+def get_port_from_file():
+    """Get saved port from file"""
+    port_file = "current_port.json"
+    if os.path.exists(port_file):
+        try:
+            with open(port_file, 'r') as f:
+                data = json.load(f)
+                return data.get('port', START_PORT)
+        except:
+            return START_PORT
+    return START_PORT
+
+def save_port_to_file(port):
+    """Save current port to file"""
+    port_file = "current_port.json"
+    with open(port_file, 'w') as f:
+        json.dump({'port': port, 'timestamp': datetime.now().isoformat()}, f)
+
+def is_port_in_use(port):
+    """Check if port is in use"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('0.0.0.0', port))
+        sock.close()
+        return False
+    except OSError:
+        return True
+
 # ============================================================
 
 
@@ -36,14 +93,12 @@ def get_cached(key):
 
 
 def format_address(address):
-    """Clean address by replacing ! with ,"""
     if not address:
         return "N/A"
     return address.replace("!", ", ")
 
 
 def clean_data(data):
-    """Clean and format the data"""
     cleaned = []
     for item in data:
         cleaned.append({
@@ -58,6 +113,10 @@ def clean_data(data):
         })
     return cleaned
 
+
+# ============================================================
+# ROUTES
+# ============================================================
 
 @app.route('/api/aadhar', methods=['GET'])
 def aadhar_lookup():
@@ -78,7 +137,6 @@ def aadhar_lookup():
             "provided": aadhar
         }), 400
     
-    # Check cache
     if CACHE_ENABLED:
         cache_key = get_cache_key(aadhar, api_key)
         cached = get_cached(cache_key)
@@ -99,11 +157,9 @@ def aadhar_lookup():
             raw_data = response.json()
             
             if raw_data.get("status"):
-                # Clean data
                 result = raw_data.get("result", [])
                 cleaned_result = clean_data(result)
                 
-                # Cache
                 if CACHE_ENABLED:
                     cache_key = get_cache_key(aadhar, api_key)
                     cache_store[cache_key] = (cleaned_result, time.time())
@@ -137,7 +193,6 @@ def aadhar_lookup():
 
 @app.route('/api/aadhar/clean', methods=['GET'])
 def aadhar_clean():
-    """Get cleaned and formatted data"""
     aadhar = request.args.get('number')
     api_key = request.args.get('key', DEFAULT_KEY)
     
@@ -164,7 +219,6 @@ def aadhar_clean():
 
 @app.route('/api/aadhar/raw', methods=['GET'])
 def aadhar_raw():
-    """Get raw response from original API"""
     aadhar = request.args.get('number')
     api_key = request.args.get('key', DEFAULT_KEY)
     
@@ -177,26 +231,8 @@ def aadhar_raw():
     return jsonify(response.json())
 
 
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify({
-        "service": "Aadhar API Clone",
-        "owner": "@Xenon33cyber",
-        "version": "2.0.0",
-        "status": "online",
-        "endpoints": {
-            "/api/aadhar?number=<12digit>&key=<api_key>": "Get Aadhar details",
-            "/api/aadhar/clean?number=<12digit>&key=<api_key>": "Get cleaned data",
-            "/api/aadhar/raw?number=<12digit>&key=<api_key>": "Get raw response",
-            "/api/aadhar/check?number=<12digit>": "Validate Aadhar"
-        },
-        "example": "/api/aadhar?number=327567544017"
-    })
-
-
 @app.route('/api/aadhar/check', methods=['GET'])
 def aadhar_check():
-    """Validate Aadhar number"""
     aadhar = request.args.get('number')
     
     if not aadhar:
@@ -220,6 +256,23 @@ def clear_cache():
     })
 
 
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({
+        "service": "Aadhar API Clone",
+        "owner": "@Xenon33cyber",
+        "version": "2.0.0",
+        "status": "online",
+        "endpoints": {
+            "/api/aadhar?number=<12digit>&key=<api_key>": "Get Aadhar details",
+            "/api/aadhar/clean?number=<12digit>&key=<api_key>": "Get cleaned data",
+            "/api/aadhar/raw?number=<12digit>&key=<api_key>": "Get raw response",
+            "/api/aadhar/check?number=<12digit>": "Validate Aadhar"
+        },
+        "example": "/api/aadhar?number=327567544017"
+    })
+
+
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({
@@ -233,16 +286,38 @@ def not_found(e):
     }), 404
 
 
+# ============================================================
+# MAIN
+# ============================================================
+
 if __name__ == "__main__":
+    # Try saved port first
+    saved_port = get_port_from_file()
+    
+    # Check if saved port is available
+    if saved_port and not is_port_in_use(saved_port):
+        PORT = saved_port
+        print(f"ℹ️ Using saved port: {PORT}")
+    else:
+        # Find available port
+        PORT = find_available_port(START_PORT)
+        if PORT is None:
+            print("❌ No available ports found!")
+            sys.exit(1)
+        save_port_to_file(PORT)
+        print(f"ℹ️ Using new port: {PORT}")
+    
     print("=" * 50)
-    print("🔍 AADHAR FULLY WORKING)")
+    print("🔍 AADHAR API CLONE (Auto-Port Select)")
     print("💀 Owner: @Xenon33cyber")
-    print("📡 Running on http://0.0.0.0:5000")
+    print(f"📡 Running on http://0.0.0.0:{PORT}")
     print("=" * 50)
     print("\n📌 Test Commands:")
-    print("  curl http://localhost:5000/api/aadhar?number=327567544017")
-    print("  curl http://localhost:5000/api/aadhar/clean?number=327567544017")
-    print("  curl http://localhost:5000/api/aadhar/check?number=327567544017")
+    print(f"  curl http://localhost:{PORT}/api/aadhar?number=327567544017")
+    print(f"  curl http://localhost:{PORT}/api/aadhar/clean?number=327567544017")
+    print(f"  curl http://localhost:{PORT}/api/aadhar/check?number=327567544017")
+    print("=" * 50)
+    print(f"\n📌 Admin: Clear cache with POST /api/cache/clear")
     print("=" * 50)
     
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=PORT, debug=False)
